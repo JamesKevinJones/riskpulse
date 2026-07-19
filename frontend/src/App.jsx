@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  generateAttackBurst,
+  generateTransaction,
+  makeDecision,
+} from './demoEngine'
 import './App.css'
 
-const API_BASE = import.meta.env.VITE_API_URL || '/api'
+const FORCE_DEMO = import.meta.env.VITE_DEMO_MODE === 'true'
+const API_BASE = import.meta.env.VITE_API_URL ?? '/api'
 
 async function api(path, options) {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -10,7 +16,7 @@ async function api(path, options) {
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || res.statusText)
+    throw new Error(typeof err.detail === 'string' ? err.detail : res.statusText)
   }
   return res.json()
 }
@@ -54,18 +60,51 @@ function timeLabel(iso) {
   }
 }
 
+function emptyStats() {
+  return {
+    total_transactions: 0,
+    pending_queue: 0,
+    high_risk_seen: 0,
+    decisions_made: 0,
+    threshold: 60,
+    streaming: false,
+  }
+}
+
+function applyTxn(txn, setFeed, setQueue, setSelectedId, setStats) {
+  setFeed((prev) => [txn, ...prev.filter((t) => t.id !== txn.id)].slice(0, 60))
+  if (txn.status === 'pending') {
+    setQueue((prev) =>
+      [txn, ...prev.filter((t) => t.id !== txn.id)].sort((a, b) => b.risk_score - a.risk_score),
+    )
+    setSelectedId((cur) => cur || txn.id)
+  }
+  setStats((s) => {
+    const base = s || emptyStats()
+    return {
+      ...base,
+      total_transactions: base.total_transactions + 1,
+      pending_queue: txn.status === 'pending' ? base.pending_queue + 1 : base.pending_queue,
+      high_risk_seen:
+        txn.risk_score >= (base.threshold || 60) ? base.high_risk_seen + 1 : base.high_risk_seen,
+    }
+  })
+}
+
 export default function App() {
+  const [demoMode, setDemoMode] = useState(FORCE_DEMO)
   const [feed, setFeed] = useState([])
   const [queue, setQueue] = useState([])
   const [decisions, setDecisions] = useState([])
-  const [stats, setStats] = useState(null)
+  const [stats, setStats] = useState(emptyStats)
   const [selectedId, setSelectedId] = useState(null)
   const [streaming, setStreaming] = useState(false)
-  const [connected, setConnected] = useState(false)
+  const [connected, setConnected] = useState(FORCE_DEMO)
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState('')
   const [operator] = useState('ops_demo')
   const wsRef = useRef(null)
+  const streamRef = useRef(null)
 
   const selected = useMemo(
     () => queue.find((t) => t.id === selectedId) || feed.find((t) => t.id === selectedId) || null,
@@ -73,6 +112,7 @@ export default function App() {
   )
 
   const refresh = useCallback(async () => {
+    if (demoMode) return
     const [q, tx, d, s] = await Promise.all([
       api('/queue'),
       api('/transactions?limit=40'),
@@ -85,13 +125,48 @@ export default function App() {
     setStats(s)
     setStreaming(Boolean(s.streaming))
     if (!selectedId && q[0]) setSelectedId(q[0].id)
-  }, [selectedId])
+  }, [demoMode, selectedId])
 
   useEffect(() => {
-    refresh().catch((e) => setToast(e.message))
-  }, [refresh])
+    if (FORCE_DEMO) {
+      setToast('Browser demo mode — full API runs on LinuxONE / Docker locally')
+      return undefined
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        await api('/health')
+        if (cancelled) return
+        setDemoMode(false)
+        setConnected(true)
+        const [q, tx, d, s] = await Promise.all([
+          api('/queue'),
+          api('/transactions?limit=40'),
+          api('/decisions?limit=20'),
+          api('/stats'),
+        ])
+        if (cancelled) return
+        setQueue(q)
+        setFeed(tx)
+        setDecisions(d)
+        setStats(s)
+        setStreaming(Boolean(s.streaming))
+        if (q[0]) setSelectedId(q[0].id)
+      } catch {
+        if (cancelled) return
+        setDemoMode(true)
+        setConnected(true)
+        setStats(emptyStats())
+        setToast('No API host — running free browser demo on Vercel')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
+    if (demoMode) return undefined
     let alive = true
     let retry
 
@@ -113,30 +188,7 @@ export default function App() {
         try {
           const msg = JSON.parse(evt.data)
           if (msg.type === 'transaction' || msg.type === 'alert') {
-            const txn = msg.transaction
-            setFeed((prev) => [txn, ...prev.filter((t) => t.id !== txn.id)].slice(0, 60))
-            if (txn.status === 'pending') {
-              setQueue((prev) =>
-                [txn, ...prev.filter((t) => t.id !== txn.id)].sort(
-                  (a, b) => b.risk_score - a.risk_score,
-                ),
-              )
-              setSelectedId((cur) => cur || txn.id)
-            }
-            setStats((s) =>
-              s
-                ? {
-                    ...s,
-                    total_transactions: s.total_transactions + 1,
-                    pending_queue:
-                      txn.status === 'pending' ? s.pending_queue + 1 : s.pending_queue,
-                    high_risk_seen:
-                      txn.risk_score >= (s.threshold || 60)
-                        ? s.high_risk_seen + 1
-                        : s.high_risk_seen,
-                  }
-                : s,
-            )
+            applyTxn(msg.transaction, setFeed, setQueue, setSelectedId, setStats)
           }
           if (msg.type === 'decision') {
             const txn = msg.transaction
@@ -167,20 +219,37 @@ export default function App() {
       clearTimeout(retry)
       wsRef.current?.close()
     }
-  }, [])
+  }, [demoMode])
 
   useEffect(() => {
     if (!toast) return
-    const t = setTimeout(() => setToast(''), 2800)
+    const t = setTimeout(() => setToast(''), 3200)
     return () => clearTimeout(t)
   }, [toast])
+
+  useEffect(
+    () => () => {
+      if (streamRef.current) clearInterval(streamRef.current)
+    },
+    [],
+  )
 
   async function startStream() {
     setBusy(true)
     try {
-      await api('/stream/start', { method: 'POST' })
-      setStreaming(true)
-      setToast('Live stream started')
+      if (demoMode) {
+        if (streamRef.current) clearInterval(streamRef.current)
+        streamRef.current = setInterval(() => {
+          applyTxn(generateTransaction(), setFeed, setQueue, setSelectedId, setStats)
+        }, 1400)
+        setStreaming(true)
+        setStats((s) => ({ ...(s || emptyStats()), streaming: true }))
+        setToast('Live stream started (browser demo)')
+      } else {
+        await api('/stream/start', { method: 'POST' })
+        setStreaming(true)
+        setToast('Live stream started')
+      }
     } catch (e) {
       setToast(e.message)
     } finally {
@@ -191,9 +260,17 @@ export default function App() {
   async function stopStream() {
     setBusy(true)
     try {
-      await api('/stream/stop', { method: 'POST' })
-      setStreaming(false)
-      setToast('Stream stopped')
+      if (demoMode) {
+        if (streamRef.current) clearInterval(streamRef.current)
+        streamRef.current = null
+        setStreaming(false)
+        setStats((s) => ({ ...(s || emptyStats()), streaming: false }))
+        setToast('Stream stopped')
+      } else {
+        await api('/stream/stop', { method: 'POST' })
+        setStreaming(false)
+        setToast('Stream stopped')
+      }
     } catch (e) {
       setToast(e.message)
     } finally {
@@ -204,12 +281,20 @@ export default function App() {
   async function simulateAttack() {
     setBusy(true)
     try {
-      const res = await api('/demo/attack', {
-        method: 'POST',
-        body: JSON.stringify({ intensity: 'high' }),
-      })
-      setToast(`Attack simulation: ${res.injected} high-risk alerts`)
-      await refresh()
+      if (demoMode) {
+        const burst = generateAttackBurst('high')
+        for (const txn of burst) {
+          applyTxn(txn, setFeed, setQueue, setSelectedId, setStats)
+        }
+        setToast(`Attack simulation: ${burst.length} high-risk alerts`)
+      } else {
+        const res = await api('/demo/attack', {
+          method: 'POST',
+          body: JSON.stringify({ intensity: 'high' }),
+        })
+        setToast(`Attack simulation: ${res.injected} high-risk alerts`)
+        await refresh()
+      }
     } catch (e) {
       setToast(e.message)
     } finally {
@@ -221,10 +306,24 @@ export default function App() {
     if (!selected) return
     setBusy(true)
     try {
-      await api(`/transactions/${selected.id}/decide`, {
-        method: 'POST',
-        body: JSON.stringify({ action, operator, notes: `Demo ${action}` }),
-      })
+      if (demoMode) {
+        const { transaction, decision } = makeDecision(selected, action, operator)
+        setQueue((prev) => prev.filter((t) => t.id !== transaction.id))
+        setFeed((prev) => [transaction, ...prev.filter((t) => t.id !== transaction.id)])
+        setDecisions((prev) => [decision, ...prev].slice(0, 30))
+        setSelectedId((cur) => (cur === transaction.id ? null : cur))
+        setStats((s) => ({
+          ...(s || emptyStats()),
+          pending_queue: Math.max(0, (s?.pending_queue || 1) - 1),
+          decisions_made: (s?.decisions_made || 0) + 1,
+        }))
+        setToast(`${decision.action.toUpperCase()} · ${transaction.merchant}`)
+      } else {
+        await api(`/transactions/${selected.id}/decide`, {
+          method: 'POST',
+          body: JSON.stringify({ action, operator, notes: `Demo ${action}` }),
+        })
+      }
     } catch (e) {
       setToast(e.message)
     } finally {
@@ -237,11 +336,14 @@ export default function App() {
       <header className="topbar">
         <div className="brand-block">
           <p className="brand">RiskPulse</p>
-          <p className="tagline">Detect. Decide. Respond. — on IBM Z / LinuxONE</p>
+          <p className="tagline">
+            Detect. Decide. Respond. — on IBM Z / LinuxONE
+            {demoMode ? ' · browser demo' : ''}
+          </p>
         </div>
         <div className="top-actions">
           <span className={`pill ${connected ? 'on' : 'off'}`}>
-            {connected ? 'LIVE' : 'OFFLINE'}
+            {connected ? (demoMode ? 'DEMO' : 'LIVE') : 'OFFLINE'}
           </span>
           {streaming ? (
             <button type="button" className="btn ghost" disabled={busy} onClick={stopStream}>

@@ -13,12 +13,15 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .generator import TransactionGenerator
 from .scorer import RiskScorer
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "riskpulse.db"
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 RISK_THRESHOLD = 60
 
 
@@ -404,3 +407,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         manager.disconnect(websocket)
     except Exception:
         manager.disconnect(websocket)
+
+
+# Serve built React UI when present (Hugging Face Space / single-container deploy)
+if STATIC_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+    @app.get("/")
+    def spa_index() -> FileResponse:
+        return FileResponse(STATIC_DIR / "index.html")
+
+    @app.get("/{full_path:path}")
+    def spa_fallback(full_path: str) -> FileResponse:
+        candidate = STATIC_DIR / full_path
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(STATIC_DIR / "index.html")
