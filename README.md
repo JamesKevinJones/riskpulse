@@ -6,18 +6,17 @@ Live payment-risk co-pilot: stream transactions, score risk with rules + Isolati
 
 > Replace `[ONLXXX]` with your team number before submission.
 
-## Live links
+## Repository
 
-| | URL |
-| --- | --- |
-| **GitHub** | https://github.com/JamesKevinJones/riskpulse |
-| **Vercel demo** | https://frontend-iota-liart-1hrf2xeg9u.vercel.app |
+**GitHub:** https://github.com/JamesKevinJones/riskpulse
 
-The Vercel site runs a **free browser demo** (no credit card / paid API host). On datathon day, run the FastAPI backend on LinuxONE for the full IBM Z story.
+**Recommended setup:** clone this repo and run the **backend locally** (and frontend locally). No paid cloud API host required.
 
-## Quick start (local)
+Optional shareable UI-only demo: https://frontend-iota-liart-1hrf2xeg9u.vercel.app (browser demo mode). On datathon day, point the same app at your LinuxONE backend.
 
-### Backend
+## Quick start (local backend + local UI)
+
+### 1. Backend (keep this local)
 
 ```bash
 cd backend
@@ -28,7 +27,9 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### Frontend
+API: http://localhost:8000/health
+
+### 2. Frontend
 
 ```bash
 cd frontend
@@ -36,7 +37,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173 — API defaults to http://localhost:8000.
+Open http://localhost:5173 — Vite proxies `/api` and `/ws` to your local backend.
 
 ## Docker (LinuxONE / any Linux host)
 
