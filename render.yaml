@@ -1,0 +1,14 @@
+# Expose RiskPulse API as a free Render Web Service.
+# Dashboard: New → Blueprint → connect this repo
+# Or: New → Web Service → Docker → rootDir backend
+
+services:
+  - type: web
+    name: riskpulse-api
+    runtime: docker
+    rootDir: backend
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"

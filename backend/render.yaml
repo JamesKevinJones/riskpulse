@@ -1,0 +1,3 @@
+# RiskPulse API — Render free tier
+# Start: uvicorn (Dockerfile CMD already set)
+# Health: GET /health
