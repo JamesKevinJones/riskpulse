@@ -6,6 +6,15 @@ Live payment-risk co-pilot: stream transactions, score risk with rules + Isolati
 
 > Replace `[ONLXXX]` with your team number before submission.
 
+## Live links
+
+| | URL |
+| --- | --- |
+| **GitHub** | https://github.com/JamesKevinJones/riskpulse |
+| **Vercel demo** | https://frontend-iota-liart-1hrf2xeg9u.vercel.app |
+
+The Vercel site runs a **free browser demo** (no credit card / paid API host). On datathon day, run the FastAPI backend on LinuxONE for the full IBM Z story.
+
 ## Quick start (local)
 
 ### Backend
