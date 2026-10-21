@@ -9,3 +9,4 @@ frontend/dist/
 .env
 .DS_Store
 *.log
+backend/static/
