@@ -419,7 +419,9 @@ if STATIC_DIR.is_dir():
 
     @app.get("/{full_path:path}")
     def spa_fallback(full_path: str) -> FileResponse:
-        candidate = STATIC_DIR / full_path
-        if candidate.is_file():
+        # full_path arrives percent-decoded, so "..%2F" is a real "../": resolve
+        # and refuse anything that lands outside the built UI.
+        candidate = (STATIC_DIR / full_path).resolve()
+        if candidate.is_file() and candidate.is_relative_to(STATIC_DIR.resolve()):
             return FileResponse(candidate)
         return FileResponse(STATIC_DIR / "index.html")
